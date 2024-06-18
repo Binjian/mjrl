@@ -1,8 +1,8 @@
 import numpy as np
-from gym import utils
+from gymnasium import utils
 from mjrl.envs import mujoco_env
-from mujoco_py import MjViewer
-
+from mujoco import viewer
+import mujoco
 
 class PegEnv(mujoco_env.MujocoEnv, utils.EzPickle):
     def __init__(self):
@@ -90,7 +90,7 @@ class PegEnv(mujoco_env.MujocoEnv, utils.EzPickle):
                     target_pos=target_pos)
 
     def set_env_state(self, state):
-        self.sim.reset()
+        mujoco.mj_resetData(self.model,self.data)
         qp = state['qp'].copy()
         qv = state['qv'].copy()
         target_pos = state['target_pos']
@@ -111,7 +111,7 @@ class PegEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         return dict(state=self.get_env_state())
 
     def mj_viewer_setup(self):
-        self.viewer = MjViewer(self.sim)
+        self.viewer = viewer.launch_passive(self.model, self.data)
         self.viewer.cam.azimuth += 200
-        self.sim.forward()
+        mujoco.mj_forward(self.model,self.data)
         self.viewer.cam.distance = self.model.stat.extent*2.0

@@ -1,46 +1,38 @@
 import os
 
-from gym import error, spaces
-from gym.utils import seeding
+from gymnasium import error, spaces
+from gymnasium.utils import seeding
 import numpy as np
 from os import path
-import gym
+import gymnasium as gym
 import six
 import time as timer
+import mujoco
 
-try:
-    import mujoco_py
-    from mujoco_py import load_model_from_path, MjSim, MjViewer
-except ImportError as e:
-    raise error.DependencyNotInstalled("{}. (HINT: you need to install mujoco_py, and also perform the setup instructions here: https://github.com/openai/mujoco-py/.)".format(e))
 
-def get_sim(model_path):
+def get_model(model_path):
     if model_path.startswith("/"):
         fullpath = model_path
     else:
         fullpath = os.path.join(os.path.dirname(__file__), "assets", model_path)
     if not path.exists(fullpath):
         raise IOError("File %s does not exist" % fullpath)
-    model = load_model_from_path(fullpath)
-    return MjSim(model)
+    return mujoco.MjModel.from_xml_path(model_path)
+
 
 class MujocoEnv(gym.Env):
-    """Superclass for all MuJoCo environments.
-    """
+    """Superclass for all MuJoCo environments."""
 
     def __init__(self, model_path=None, frame_skip=1, sim=None):
 
-        if sim is None:
-            self.sim = get_sim(model_path)
-        else:
-            self.sim = sim
-        self.data = self.sim.data
-        self.model = self.sim.model
+        self.model = get_model(model_path)
+        self.data = mujoco.MjData(self.model)
+        self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
 
         self.frame_skip = frame_skip
         self.metadata = {
-            'render.modes': ['human', 'rgb_array'],
-            'video.frames_per_second': int(np.round(1.0 / self.dt))
+            "render.modes": ["human", "rgb_array"],
+            "video.frames_per_second": int(np.round(1.0 / self.dt)),
         }
         self.mujoco_render_frames = False
 
@@ -51,14 +43,18 @@ class MujocoEnv(gym.Env):
         except NotImplementedError:
             observation, _reward, done, _info = self._step(np.zeros(self.model.nu))
         assert not done
-        self.obs_dim = np.sum([o.size for o in observation]) if type(observation) is tuple else observation.size
+        self.obs_dim = (
+            np.sum([o.size for o in observation])
+            if type(observation) is tuple
+            else observation.size
+        )
 
         bounds = self.model.actuator_ctrlrange.copy()
         low = bounds[:, 0]
         high = bounds[:, 1]
         self.action_space = spaces.Box(low, high, dtype=np.float32)
 
-        high = np.inf*np.ones(self.obs_dim)
+        high = np.inf * np.ones(self.obs_dim)
         low = -high
         self.observation_space = spaces.Box(low, high, dtype=np.float32)
 
@@ -100,18 +96,24 @@ class MujocoEnv(gym.Env):
     # -----------------------------
 
     def reset(self):
-        self.sim.reset()
-        self.sim.forward()
+        # self.sim.reset()
+        # self.sim.forward()
+        # ob = self.reset_model()
+        mujoco.mj_resetData(self.model, self.data)
+        mujoco.mj_forward(self.model, self.data)
         ob = self.reset_model()
+
         return ob
 
     def set_state(self, qpos, qvel):
         assert qpos.shape == (self.model.nq,) and qvel.shape == (self.model.nv,)
-        old_state = self.sim.get_state()
-        new_state = mujoco_py.MjSimState(old_state.time, qpos, qvel,
-                                         old_state.act, old_state.udd_state)
-        self.sim.set_state(new_state)
-        self.sim.forward()
+        # state = mujoco.MjData(time=old_state.time, qpos=qpos, qvel=qvel,
+        #                                 act=old_state.act, qacc=old_state.qacc, act_dot=old_state.act_dot,)
+        # mujoco.mj_setState(self.sim,new_state)
+        self.data.qpos = qpos
+        self.data.qvel = qvel
+        # self.sim.forward()
+        mujoco.mj_forward(self.model, self.data)
 
     @property
     def dt(self):
@@ -119,9 +121,10 @@ class MujocoEnv(gym.Env):
 
     def do_simulation(self, ctrl, n_frames):
         for i in range(self.model.nu):
-            self.sim.data.ctrl[i] = ctrl[i]
+            self.data.ctrl[i] = ctrl[i]
         for _ in range(n_frames):
-            self.sim.step()
+            # self.sim.step()
+            mujoco.mj_step(self.model, self.data)
             if self.mujoco_render_frames is True:
                 self.mj_render()
 
@@ -131,25 +134,26 @@ class MujocoEnv(gym.Env):
         except:
             self.mj_viewer_setup()
             self.viewer._run_speed = 0.5
-            #self.viewer._run_speed /= self.frame_skip
+            # self.viewer._run_speed /= self.frame_skip
             self.viewer.render()
 
     def render(self, *args, **kwargs):
         pass
-        #return self.mj_render()
+        # return self.mj_render()
 
     def _get_viewer(self):
         pass
-        #return None
+        # return None
 
     def state_vector(self):
         state = self.sim.get_state()
-        return np.concatenate([
-            state.qpos.flat, state.qvel.flat])
+        return np.concatenate([state.qpos.flat, state.qvel.flat])
 
     # -----------------------------
 
-    def visualize_policy(self, policy, horizon=1000, num_episodes=1, mode='exploration'):
+    def visualize_policy(
+        self, policy, horizon=1000, num_episodes=1, mode="exploration"
+    ):
         self.mujoco_render_frames = True
         for ep in range(num_episodes):
             o = self.reset()
@@ -157,38 +161,56 @@ class MujocoEnv(gym.Env):
             t = 0
             score = 0.0
             while t < horizon and d is False:
-                a = policy.get_action(o)[0] if mode == 'exploration' else policy.get_action(o)[1]['evaluation']
+                a = (
+                    policy.get_action(o)[0]
+                    if mode == "exploration"
+                    else policy.get_action(o)[1]["evaluation"]
+                )
                 o, r, d, _ = self.step(a)
-                t = t+1
+                t = t + 1
                 score = score + r
             print("Episode score = %f" % score)
         self.mujoco_render_frames = False
 
-    def visualize_policy_offscreen(self, policy, horizon=1000,
-                                   num_episodes=1,
-                                   frame_size=(640,480),
-                                   mode='exploration',
-                                   save_loc='/tmp/',
-                                   filename='newvid',
-                                   camera_name=None):
+    def visualize_policy_offscreen(
+        self,
+        policy,
+        horizon=1000,
+        num_episodes=1,
+        frame_size=(640, 480),
+        mode="exploration",
+        save_loc="/tmp/",
+        filename="newvid",
+        camera_name=None,
+    ):
         import skvideo.io
+
         for ep in range(num_episodes):
-            print("Episode %d: rendering offline " % ep, end='', flush=True)
+            print("Episode %d: rendering offline " % ep, end="", flush=True)
             o = self.reset()
             d = False
             t = 0
             arrs = []
             t0 = timer.time()
             while t < horizon and d is False:
-                a = policy.get_action(o)[0] if mode == 'exploration' else policy.get_action(o)[1]['evaluation']
+                a = (
+                    policy.get_action(o)[0]
+                    if mode == "exploration"
+                    else policy.get_action(o)[1]["evaluation"]
+                )
                 o, r, d, _ = self.step(a)
-                t = t+1
-                curr_frame = self.sim.render(width=frame_size[0], height=frame_size[1],
-                                             mode='offscreen', camera_name=camera_name, device_id=0)
-                arrs.append(curr_frame[::-1,:,:])
-                print(t, end=', ', flush=True)
+                t = t + 1
+                curr_frame = self.sim.render(
+                    width=frame_size[0],
+                    height=frame_size[1],
+                    mode="offscreen",
+                    camera_name=camera_name,
+                    device_id=0,
+                )
+                arrs.append(curr_frame[::-1, :, :])
+                print(t, end=", ", flush=True)
             file_name = save_loc + filename + str(ep) + ".mp4"
-            skvideo.io.vwrite( file_name, np.asarray(arrs))
+            skvideo.io.vwrite(file_name, np.asarray(arrs))
             print("saved", file_name)
             t1 = timer.time()
-            print("time taken = %f"% (t1-t0))
+            print("time taken = %f" % (t1 - t0))

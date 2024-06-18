@@ -1,7 +1,7 @@
 import numpy as np
-from gym import utils
+from gymnasium import utils
 from mjrl.envs import mujoco_env
-from mujoco_py import MjViewer
+import mujoco
 
 
 class PointMassEnv(mujoco_env.MujocoEnv, utils.EzPickle):
@@ -95,7 +95,7 @@ class PointMassEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         target_pos = state['target_pos']
         self.set_state(qp, qv)
         self.model.site_pos[self.target_sid] = target_pos
-        self.sim.forward()
+        mujoco.mj_forward(self.model, self.data)
 
     # --------------------------------
     # utility functions
@@ -105,5 +105,5 @@ class PointMassEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         return dict(state=self.get_env_state())
 
     def mj_viewer_setup(self):
-        self.viewer = MjViewer(self.sim)
-        self.sim.forward()
+        self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
+        mujoco.mj_forward(self.model, self.data)

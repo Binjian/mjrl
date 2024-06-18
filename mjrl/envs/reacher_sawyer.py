@@ -1,8 +1,7 @@
 import numpy as np
-from gym import utils
+from gymnasium import utils
 from mjrl.envs import mujoco_env
-from mujoco_py import MjViewer
-
+import mujoco
 
 class Reacher7DOFEnv(mujoco_env.MujocoEnv, utils.EzPickle):
     def __init__(self):
@@ -65,7 +64,7 @@ class Reacher7DOFEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         target_pos[1] = self.np_random.uniform(low=-0.2, high=0.2)
         target_pos[2] = self.np_random.uniform(low=-0.25, high=0.25)
         self.model.site_pos[self.target_sid] = target_pos
-        self.sim.forward()
+        mujoco.mj_forward(self.model, self.data)
 
     def reset_model(self, seed=None):
         if seed is not None:
@@ -85,14 +84,16 @@ class Reacher7DOFEnv(mujoco_env.MujocoEnv, utils.EzPickle):
                     target_pos=target_pos)
 
     def set_env_state(self, state):
-        self.sim.reset()
+        #self.sim.reset()
+        mujoco.mj_resetData(self.model, self.data)
         qp = state['qp'].copy()
         qv = state['qv'].copy()
         target_pos = state['target_pos']
         self.model.site_pos[self.target_sid] = target_pos
         self.data.qpos[:] = qp
         self.data.qvel[:] = qv
-        self.sim.forward()
+        #self.sim.forward()
+        mujoco.mj_forward(self.model, self.data)
 
     # --------------------------------
     # utility functions
@@ -102,7 +103,7 @@ class Reacher7DOFEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         return dict(state=self.get_env_state())
 
     def mj_viewer_setup(self):
-        self.viewer = MjViewer(self.sim)
+        self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
         self.viewer.cam.trackbodyid = 1
         self.viewer.cam.type = 1
         self.sim.forward()
